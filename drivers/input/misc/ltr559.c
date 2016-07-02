@@ -1902,6 +1902,8 @@ int ltr559_probe(struct i2c_client *client, const struct i2c_device_id *id)
 		dev_err(&client->dev, "Unable to register to ps sensor class\n");
 		goto exit_unregister_als_class;
 	}
+	
+	hardwareinfo_set_prop(HARDWARE_ALSPS,"ltr559"); //wingtech hardware_info
 
 
 #if defined(DYNAMIC_CALIBRATE)

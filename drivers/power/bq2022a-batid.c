@@ -312,7 +312,7 @@ static int bq2022a_probe(struct platform_device *pdev)
 		break;
 	}
 	pr_debug("battery module:%s", bat_id_buf);
-
+	hardwareinfo_set_prop(HARDWARE_BATTERY_ID, bat_id_buf); //wingtech hardware_info
 	pr_err("success!!\n");
 
 	return rc;

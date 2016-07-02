@@ -46,5 +46,6 @@ enum{
 #define HARDWARE_BACK_CAM_MOUDULE_ID_SET			_IOWR(HARDWARE_ID, 0x81, char[HARDWARE_MAX_ITEM_LONGTH])
 #define HARDWARE_FRONT_CAM_MODULE_ID_SET			_IOWR(HARDWARE_ID, 0x82, char[HARDWARE_MAX_ITEM_LONGTH])
 
+int hardwareinfo_set_prop(int cmd, const char *name);
 
 #endif

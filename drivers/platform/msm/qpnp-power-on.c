@@ -1493,6 +1493,8 @@ void probe_board_and_set(void)
 			strncpy(boardid_info, boadrid_start+sizeof("board_id=")-1, 8);
 	} else
 		sprintf(boardid_info, "boarid not define!");
+
+	hardwareinfo_set_prop(HARDWARE_BOARD_ID, boardid_info); // wingtech hardware_info
 }
 
 

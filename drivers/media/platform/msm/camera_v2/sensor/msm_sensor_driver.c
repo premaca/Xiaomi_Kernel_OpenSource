@@ -963,6 +963,10 @@ int32_t msm_sensor_driver_probe(void *setting,
 
 	msm_sensor_fill_sensor_info(s_ctrl, probed_info, entity_name);
 
+	/*wingtech hardware_info*/
+	hardwareinfo_set_prop(probed_info->position==BACK_CAMERA_B
+		?HARDWARE_BACK_CAM:HARDWARE_FRONT_CAM,probed_info->sensor_name);
+
 	return rc;
 
 camera_power_down:
