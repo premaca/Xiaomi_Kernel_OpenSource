@@ -1,6 +1,6 @@
 /* Copyright (C) 2008 Google, Inc.
  * Copyright (C) 2008 HTC Corporation
- * Copyright (c) 2009-2014, 2016 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2009-2017, The Linux Foundation. All rights reserved.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -27,11 +27,14 @@
 #include <linux/msm_audio_ion.h>
 #include <linux/compat.h>
 #include <sound/q6core.h>
+#include <linux/mutex.h>
 #include "audio_utils_aio.h"
 #ifdef CONFIG_USE_DEV_CTRL_VOLUME
 #include <linux/qdsp6v2/audio_dev_ctl.h>
 #endif /*CONFIG_USE_DEV_CTRL_VOLUME*/
+DEFINE_MUTEX(lock);
 #ifdef CONFIG_DEBUG_FS
+
 int audio_aio_debug_open(struct inode *inode, struct file *file)
 {
 	file->private_data = inode->i_private;
@@ -44,29 +47,37 @@ ssize_t audio_aio_debug_read(struct file *file, char __user *buf,
 	const int debug_bufmax = 4096;
 	static char buffer[4096];
 	int n = 0;
-	struct q6audio_aio *audio = file->private_data;
+	struct q6audio_aio *audio;
 
-	mutex_lock(&audio->lock);
-	n = scnprintf(buffer, debug_bufmax, "opened %d\n", audio->opened);
-	n += scnprintf(buffer + n, debug_bufmax - n,
-			"enabled %d\n", audio->enabled);
-	n += scnprintf(buffer + n, debug_bufmax - n,
-			"stopped %d\n", audio->stopped);
-	n += scnprintf(buffer + n, debug_bufmax - n,
-			"feedback %d\n", audio->feedback);
-	mutex_unlock(&audio->lock);
-	/* Following variables are only useful for debugging when
-	 * when playback halts unexpectedly. Thus, no mutual exclusion
-	 * enforced
-	 */
-	n += scnprintf(buffer + n, debug_bufmax - n,
-			"wflush %d\n", audio->wflush);
-	n += scnprintf(buffer + n, debug_bufmax - n,
-			"rflush %d\n", audio->rflush);
-	n += scnprintf(buffer + n, debug_bufmax - n,
-			"inqueue empty %d\n", list_empty(&audio->in_queue));
-	n += scnprintf(buffer + n, debug_bufmax - n,
-			"outqueue empty %d\n", list_empty(&audio->out_queue));
+	mutex_lock(&lock);
+	if (file->private_data != NULL) {
+		audio = file->private_data;
+		mutex_lock(&audio->lock);
+		n = scnprintf(buffer, debug_bufmax, "opened %d\n",
+				audio->opened);
+		n += scnprintf(buffer + n, debug_bufmax - n,
+				"enabled %d\n", audio->enabled);
+		n += scnprintf(buffer + n, debug_bufmax - n,
+				"stopped %d\n", audio->stopped);
+		n += scnprintf(buffer + n, debug_bufmax - n,
+				"feedback %d\n", audio->feedback);
+		mutex_unlock(&audio->lock);
+		/* Following variables are only useful for debugging when
+		 * when playback halts unexpectedly. Thus, no mutual exclusion
+		 * enforced
+		 */
+		n += scnprintf(buffer + n, debug_bufmax - n,
+				"wflush %d\n", audio->wflush);
+		n += scnprintf(buffer + n, debug_bufmax - n,
+				"rflush %d\n", audio->rflush);
+		n += scnprintf(buffer + n, debug_bufmax - n,
+				"inqueue empty %d\n",
+				list_empty(&audio->in_queue));
+		n += scnprintf(buffer + n, debug_bufmax - n,
+				"outqueue empty %d\n",
+				list_empty(&audio->out_queue));
+	}
+	mutex_unlock(&lock);
 	buffer[n] = 0;
 	return simple_read_from_buffer(buf, count, ppos, buffer, n);
 }
@@ -120,7 +131,10 @@ static int audio_aio_ion_lookup_vaddr(struct q6audio_aio *audio, void *addr,
 	list_for_each_entry(region_elt, &audio->ion_region_queue, list) {
 		if (addr >= region_elt->vaddr &&
 			addr < region_elt->vaddr + region_elt->len &&
-			addr + len <= region_elt->vaddr + region_elt->len) {
+			addr + len <= region_elt->vaddr + region_elt->len &&
+			addr + len > addr) {
+			/* to avoid integer addition overflow */
+
 			/* offset since we could pass vaddr inside a registerd
 			* ion buffer
 			*/
@@ -138,7 +152,8 @@ static int audio_aio_ion_lookup_vaddr(struct q6audio_aio *audio, void *addr,
 					list) {
 			if (addr >= region_elt->vaddr &&
 			addr < region_elt->vaddr + region_elt->len &&
-			addr + len <= region_elt->vaddr + region_elt->len)
+			addr + len <= region_elt->vaddr + region_elt->len &&
+			addr + len > addr)
 				pr_err("\t%s[%pK]:%pK, %ld --> %pK\n",
 					__func__, audio,
 					region_elt->vaddr,
@@ -570,6 +585,7 @@ int audio_aio_release(struct inode *inode, struct file *file)
 {
 	struct q6audio_aio *audio = file->private_data;
 	pr_debug("%s[%pK]\n", __func__, audio);
+	mutex_lock(&lock);
 	mutex_lock(&audio->lock);
 	mutex_lock(&audio->read_lock);
 	mutex_lock(&audio->write_lock);
@@ -602,6 +618,8 @@ int audio_aio_release(struct inode *inode, struct file *file)
 #endif
 	kfree(audio->codec_cfg);
 	kfree(audio);
+	file->private_data = NULL;
+	mutex_unlock(&lock);
 	return 0;
 }
 
@@ -830,6 +848,7 @@ static long audio_aio_process_event_req_compat(struct q6audio_aio *audio,
 	long rc;
 	struct msm_audio_event32 usr_evt_32;
 	struct msm_audio_event usr_evt;
+	memset(&usr_evt, 0, sizeof(struct msm_audio_event));
 
 	if (copy_from_user(&usr_evt_32, arg,
 				sizeof(struct msm_audio_event32))) {
@@ -839,6 +858,11 @@ static long audio_aio_process_event_req_compat(struct q6audio_aio *audio,
 	usr_evt.timeout_ms = usr_evt_32.timeout_ms;
 
 	rc = audio_aio_process_event_req_common(audio, &usr_evt);
+	if (rc < 0) {
+		pr_err("%s: audio process event failed, rc = %ld",
+			__func__, rc);
+		return rc;
+	}
 
 	usr_evt_32.event_type = usr_evt.event_type;
 	switch (usr_evt_32.event_type) {
